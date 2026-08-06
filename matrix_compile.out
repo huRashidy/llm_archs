@@ -1,0 +1,52 @@
+📦 Loading Shared Dataset (Single Execution)...
+Tokenizing 5000 samples for 'train' split...
+✅ Prepared 4000 sequence chunks of length 256.
+Tokenizing 5000 samples for 'validation' split...
+✅ Prepared 3872 sequence chunks of length 256.
+
+==================================================
+🚀 RUNNING EXPERIMENT: 1. Baseline (MHA + Sequential Res) compiled
+==================================================
+⚡ Compiling model with torch.compile(mode='reduce-overhead')...
+Optimizer Setup: 38 decayed parameter tensors (52,753,152 params), 13 non-decayed parameter tensors (4,992 params).
+Model Parameters: 52.76M
+💾 Checkpoint saved to: checkpoints/1_baseline_mha_sequential_res_compiled/model.pt
+📄 Metrics saved to: results/1_baseline_mha_sequential_res_compiled.json
+
+==================================================
+🚀 RUNNING EXPERIMENT: 2. Variant A (Parallel Residual) compiled
+==================================================
+⚡ Compiling model with torch.compile(mode='reduce-overhead')...
+Optimizer Setup: 38 decayed parameter tensors (52,753,152 params), 13 non-decayed parameter tensors (4,992 params).
+Model Parameters: 52.76M
+💾 Checkpoint saved to: checkpoints/2_variant_a_parallel_residual_compiled/model.pt
+📄 Metrics saved to: results/2_variant_a_parallel_residual_compiled.json
+
+==================================================
+🚀 RUNNING EXPERIMENT: 3. Variant B (GQA: 2 KV Heads) compiled
+==================================================
+⚡ Compiling model with torch.compile(mode='reduce-overhead')...
+Optimizer Setup: 38 decayed parameter tensors (51,573,504 params), 13 non-decayed parameter tensors (4,992 params).
+Model Parameters: 51.58M
+💾 Checkpoint saved to: checkpoints/3_variant_b_gqa_2_kv_heads_compiled/model.pt
+📄 Metrics saved to: results/3_variant_b_gqa_2_kv_heads_compiled.json
+
+==================================================
+🚀 RUNNING EXPERIMENT: 4. Variant C (GQA + Parallel Res) compiled
+==================================================
+⚡ Compiling model with torch.compile(mode='reduce-overhead')...
+Optimizer Setup: 38 decayed parameter tensors (51,573,504 params), 13 non-decayed parameter tensors (4,992 params).
+Model Parameters: 51.58M
+💾 Checkpoint saved to: checkpoints/4_variant_c_gqa_parallel_res_compiled/model.pt
+📄 Metrics saved to: results/4_variant_c_gqa_parallel_res_compiled.json
+
+========================================================================================
+📊 ISOLATED BENCHMARKING RESULTS
+========================================================================================
+Configuration                       | Params(M) | Val Loss | Val PPL  | Tok/Sec   | VRAM (GB)
+----------------------------------------------------------------------------------------
+1. Baseline (MHA + Sequential Res) compiled | 52.76     | 3.1573   | 23.51    | 62402.5   | 3.937    
+2. Variant A (Parallel Residual) compiled | 52.76     | 3.1516   | 23.37    | 63035.5   | 4.336    
+3. Variant B (GQA: 2 KV Heads) compiled | 51.58     | 3.1726   | 23.87    | 63316.2   | 4.725    
+4. Variant C (GQA + Parallel Res) compiled | 51.58     | 3.1914   | 24.32    | 64374.2   | 5.115    
+========================================================================================

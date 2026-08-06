@@ -1,0 +1,9 @@
+{
+    "config": "4. Variant C (GQA + Parallel Res)",
+    "slug": "4_variant_c_gqa_parallel_res",
+    "parameters_M": 51.58,
+    "val_loss": 3.168,
+    "val_ppl": 23.76,
+    "throughput_tok_sec": 51925.7,
+    "peak_vram_gb": 4.109
+}

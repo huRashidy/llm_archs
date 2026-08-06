@@ -1,0 +1,9 @@
+{
+    "config": "1. Baseline (MHA + Sequential Res) compiled",
+    "slug": "1_baseline_mha_sequential_res_compiled",
+    "parameters_M": 52.76,
+    "val_loss": 3.1573,
+    "val_ppl": 23.51,
+    "throughput_tok_sec": 62402.5,
+    "peak_vram_gb": 3.937
+}

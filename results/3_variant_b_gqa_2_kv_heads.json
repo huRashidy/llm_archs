@@ -1,0 +1,9 @@
+{
+    "config": "3. Variant B (GQA: 2 KV Heads)",
+    "slug": "3_variant_b_gqa_2_kv_heads",
+    "parameters_M": 51.58,
+    "val_loss": 3.1966,
+    "val_ppl": 24.45,
+    "throughput_tok_sec": 51831.6,
+    "peak_vram_gb": 4.143
+}

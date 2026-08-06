@@ -1,0 +1,9 @@
+{
+    "config": "2. Variant A (Parallel Residual)",
+    "slug": "2_variant_a_parallel_residual",
+    "parameters_M": 52.76,
+    "val_loss": 3.1742,
+    "val_ppl": 23.91,
+    "throughput_tok_sec": 49965.4,
+    "peak_vram_gb": 4.124
+}

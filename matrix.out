@@ -1,0 +1,48 @@
+📦 Loading Shared Dataset (Single Execution)...
+Tokenizing 5000 samples for 'train' split...
+✅ Prepared 4000 sequence chunks of length 256.
+Tokenizing 5000 samples for 'validation' split...
+✅ Prepared 3872 sequence chunks of length 256.
+
+==================================================
+🚀 RUNNING EXPERIMENT: 1. Baseline (MHA + Sequential Res)
+==================================================
+Optimizer Setup: 38 decayed parameter tensors (52,753,152 params), 13 non-decayed parameter tensors (4,992 params).
+Model Parameters: 52.76M
+💾 Checkpoint saved to: checkpoints/1_baseline_mha_sequential_res/model.pt
+📄 Metrics saved to: results/1_baseline_mha_sequential_res.json
+
+==================================================
+🚀 RUNNING EXPERIMENT: 2. Variant A (Parallel Residual)
+==================================================
+Optimizer Setup: 38 decayed parameter tensors (52,753,152 params), 13 non-decayed parameter tensors (4,992 params).
+Model Parameters: 52.76M
+💾 Checkpoint saved to: checkpoints/2_variant_a_parallel_residual/model.pt
+📄 Metrics saved to: results/2_variant_a_parallel_residual.json
+
+==================================================
+🚀 RUNNING EXPERIMENT: 3. Variant B (GQA: 2 KV Heads)
+==================================================
+Optimizer Setup: 38 decayed parameter tensors (51,573,504 params), 13 non-decayed parameter tensors (4,992 params).
+Model Parameters: 51.58M
+💾 Checkpoint saved to: checkpoints/3_variant_b_gqa_2_kv_heads/model.pt
+📄 Metrics saved to: results/3_variant_b_gqa_2_kv_heads.json
+
+==================================================
+🚀 RUNNING EXPERIMENT: 4. Variant C (GQA + Parallel Res)
+==================================================
+Optimizer Setup: 38 decayed parameter tensors (51,573,504 params), 13 non-decayed parameter tensors (4,992 params).
+Model Parameters: 51.58M
+💾 Checkpoint saved to: checkpoints/4_variant_c_gqa_parallel_res/model.pt
+📄 Metrics saved to: results/4_variant_c_gqa_parallel_res.json
+
+========================================================================================
+📊 ISOLATED BENCHMARKING RESULTS
+========================================================================================
+Configuration                       | Params(M) | Val Loss | Val PPL  | Tok/Sec   | VRAM (GB)
+----------------------------------------------------------------------------------------
+1. Baseline (MHA + Sequential Res)  | 52.76     | 3.1644   | 23.67    | 50178.9   | 4.157    
+2. Variant A (Parallel Residual)    | 52.76     | 3.1742   | 23.91    | 49965.4   | 4.124    
+3. Variant B (GQA: 2 KV Heads)      | 51.58     | 3.1966   | 24.45    | 51831.6   | 4.143    
+4. Variant C (GQA + Parallel Res)   | 51.58     | 3.168    | 23.76    | 51925.7   | 4.109    
+========================================================================================

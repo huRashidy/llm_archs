@@ -1,0 +1,43 @@
+[
+
+    {
+    "config": "1. Baseline (MHA + Sequential Res)",
+    "slug": "1_baseline_mha_sequential_res",
+    "parameters_M": 52.76,
+    "val_loss": 3.1644,
+    "val_ppl": 23.67,
+    "throughput_tok_sec": 50178.9,
+    "peak_vram_gb": 4.157
+    },
+
+    {
+    "config": "2. Variant A (Parallel Residual)",
+    "slug": "2_variant_a_parallel_residual",
+    "parameters_M": 52.76,
+    "val_loss": 3.1742,
+    "val_ppl": 23.91,
+    "throughput_tok_sec": 49965.4,
+    "peak_vram_gb": 4.124
+    },
+
+    {
+    "config": "3. Variant B (GQA: 2 KV Heads)",
+    "slug": "3_variant_b_gqa_2_kv_heads",
+    "parameters_M": 51.58,
+    "val_loss": 3.1966,
+    "val_ppl": 24.45,
+    "throughput_tok_sec": 51831.6,
+    "peak_vram_gb": 4.143
+    },
+
+    {
+    "config": "4. Variant C (GQA + Parallel Res)",
+    "slug": "4_variant_c_gqa_parallel_res",
+    "parameters_M": 51.58,
+    "val_loss": 3.168,
+    "val_ppl": 23.76,
+    "throughput_tok_sec": 51925.7,
+    "peak_vram_gb": 4.109
+    }
+
+] 
