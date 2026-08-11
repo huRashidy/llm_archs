@@ -41,20 +41,31 @@ class MLP(nn.Module):
         return x
 
 class RotaryEmbedding(nn.Module):
-    def __init__(self, dim, max_position_embeddings=1024, base=10000):
+    def __init__(self, dim, max_position_embeddings=4096, base=10000):
         super().__init__()
+        self.dim = dim
+        self.max_position_embeddings = max_position_embeddings
+        self.base = base
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.max_seq_len_cached = max_position_embeddings
-        t = torch.arange(self.max_seq_len_cached, dtype=self.inv_freq.dtype)
+        self._set_cos_sin_cache(max_position_embeddings)
+
+    def _set_cos_sin_cache(self, seq_len):
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(self.max_seq_len_cached, dtype=self.inv_freq.dtype, device=self.inv_freq.device)
         freqs = torch.einsum("i,j->ij", t, self.inv_freq)
         emb = torch.cat((freqs, freqs), dim=-1)
         self.register_buffer("cos_cached", emb.cos()[None, None, :, :], persistent=False)
         self.register_buffer("sin_cached", emb.sin()[None, None, :, :], persistent=False)
 
-    def forward(self, x, seq_len=None):
+    def forward(self, x, seq_len=None, start_pos=0):
         # x shape: (batch, num_heads, seq_len, head_dim)
-        return self.cos_cached[:, :, :seq_len, :], self.sin_cached[:, :, :seq_len, :]
+        if seq_len is None:
+            seq_len = x.shape[2]
+        end_pos = start_pos + seq_len
+        if end_pos > self.max_seq_len_cached:
+            self._set_cos_sin_cache(max(end_pos, self.max_seq_len_cached * 2))
+        return self.cos_cached[:, :, start_pos:end_pos, :], self.sin_cached[:, :, start_pos:end_pos, :]
 
 def rotate_half(x):
     x1 = x[..., :x.shape[-1] // 2]

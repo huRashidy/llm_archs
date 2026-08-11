@@ -99,18 +99,58 @@ While `torch.compile` accelerates execution by up to $24\%$, it reverses the VRA
 
 ---
 
+## ⚡ KV Cache Integration & Long-Sequence GQA Benchmarking
+
+### 1. KV-Cached Autoregressive Decoding & Positional Offsets
+In token-by-token autoregressive generation, recomputing Key ($K$) and Value ($V$) tensors for all prior tokens incurs an $O(N^2)$ prompt cost. Integrating a Key-Value (KV) cache reduces incremental token decoding to $O(N)$ operations.
+
+To preserve relative position information during incremental decoding:
+* **RoPE Positional Offset (`start_pos`):** When generating token $t$ ($seq\_len = 1$), `RotaryEmbedding` slices position frequency matrices at $[start\_pos : start\_pos + 1]$, correctly applying position $t$ rotations to new Query and Key vectors before cache concatenation.
+* **Un-repeated KV Storage:** GQA stores raw, un-repeated key/value heads in the KV cache ($H_{\text{kv}}$ instead of $H_q$), performing head repetition (`repeat_kv`) on-the-fly during attention computation. This shrinks the KV cache memory footprint by a factor of $\frac{H_q}{H_{\text{kv}}}$.
+
+---
+
+### 2. Long-Sequence Architecture Benchmark ($L = 2048$, Batch Size $B = 4$)
+
+Evaluated on an **NVIDIA GeForce RTX 2080 Ti** ($448\text{ GB/s}$ peak bandwidth) over a 16-Layer Transformer ($d_{\text{model}} = 2048$, $H_q = 16$ Query Heads, Vocab = 32,000):
+
+| Architecture | KV Heads ($H_{\text{kv}}$) | KV Cache Size | Peak GPU VRAM | Decode Step Time | Throughput | Achieved Bandwidth | MBU (%) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **MHA (Multi-Head Attention)** | 16 | **2,048.00 MB** | **8,868.53 MB** | 22.48 ms | 177.93 tok/s | 309.91 GB/s | **69.18%** |
+| **GQA-4 (Grouped-Query Attention)** | 4 | **512.00 MB** | **6,563.86 MB** | 20.54 ms | 194.78 tok/s | 241.22 GB/s | **53.84%** |
+| **GQA-2 (Grouped-Query Attention)** | 2 | **256.00 MB** | **4,964.51 MB** | 18.90 ms | **211.68 tok/s** | 244.39 GB/s | **54.55%** |
+| **MQA (Multi-Query Attention)** | 1 | **128.00 MB** | **4,612.49 MB** | 21.17 ms | 188.93 tok/s | 210.21 GB/s | **46.92%** |
+
+---
+
+### 3. Key Takeaways
+
+1. **VRAM Memory Footprint Reduction:**
+   - At sequence length 2048, **MHA** consumes **2.0 GB** of VRAM solely for storing KV caches.
+   - **GQA-4** reduces KV cache memory by **$4\times$** (down to 512 MB), saving over **$2.3\text{ GB}$ of peak VRAM**.
+   - **GQA-2** reduces KV cache memory by **$8\times$** (down to 256 MB), saving over **$3.9\text{ GB}$ of peak VRAM**.
+
+2. **Throughput Uplift:**
+   - **GQA-2** achieves the highest generation throughput at **211.68 tok/s** (a **$+18.9\%$ increase** over MHA's 177.93 tok/s) by drastically reducing HBM read/write traffic during single-token decoding steps.
+
+---
+
 ## 📂 Repository Structure
 
 ```text
 .
 ├── src/
 │   ├── models/
-│   │   ├── layers.py         # RMSNorm, SwiGLU, RoPE, GQA
-│   │   └── transformer.py    # Transformer Block & Decoder LLM
+│   │   ├── layers.py         # RMSNorm, SwiGLU, RoPE (with start_pos offset), GQA
+│   │   └── transformer.py    # Transformer Block, Decoder LLM & .generate() with KV cache
 │   └── data.py               # Streaming dataset & block tokenizer
 ├── checkpoints/              # Model weights per experiment
 ├── results/                  # Metric JSON files & summary reports
+├── notebooks/                # Interactive profiling notebooks (MBU & torch.compile)
 ├── train.py                  # Core training & evaluation script
 ├── run_matrix.py             # Eager Mode benchmarking harness
-├── run_compile_benchmark.py  # Torch.compile benchmarking harness
+├── run_matrix_with_compile.py # Torch.compile benchmarking harness
+├── gpu_profile_kv.py         # Long-sequence KV Cache & GQA vs MHA profiler (Throughput & MBU)
+├── gpu_profile_one_token.py  # Single-token decode kernel profiler
 └── README.md
+```
