@@ -1,4 +1,8 @@
 *.pt
 checkpoints/
-*.pt
-checkpoints/
+
+# Python cache & build directories
+__pycache__/
+*.pyc
+*.egg-info/
+.ipynb_checkpoints/
