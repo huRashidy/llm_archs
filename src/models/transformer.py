@@ -7,17 +7,24 @@ from torch.nn import functional as F
 from .layers import RMSNorm, MLP, RotaryEmbedding, apply_rotary_pos_emb
 
 
-def repeat_kv(x: torch.Tensor , n_rep: int) -> torch.Tensor:
+def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
     Repeat the key and value tensors for GQA (Grouped Query Attention).
     Args:
-        x (torch.Tensor): Input tensor of shape (batch_size, num_heads, seq_len, head_dim).
-        n_rep (int): Number of repetitions for each head.
+        x (torch.Tensor): Input tensor of shape (batch_size, num_kv_heads, seq_len, head_dim).
+        n_rep (int): Number of repetitions for each KV head (num_heads // num_kv_heads).
     Returns:
-        torch.Tensor: Repeated tensor of shape (batch_size, num_heads * n_rep, seq_len, head_dim).
+        torch.Tensor: Repeated tensor of shape (batch_size, num_kv_heads * n_rep, seq_len, head_dim).
     """
+    if n_rep == 1:
+        return x
     bsz, n_kv_heads, seq_len, head_dim = x.shape
-    return x[:, :, None, :, :].expand(bsz, n_kv_heads, n_rep, seq_len, head_dim).reshape(bsz, n_kv_heads * n_rep, seq_len, head_dim)
+    return (
+        x.unsqueeze(2)
+        .expand(bsz, n_kv_heads, n_rep, seq_len, head_dim)
+        .reshape(bsz, n_kv_heads * n_rep, seq_len, head_dim)
+    )
+
 
 class Attention(
     nn.Module,
