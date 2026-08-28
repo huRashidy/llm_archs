@@ -190,12 +190,12 @@ def profile_decode_loop(device, initial_context_len, max_new_tokens, batch_size,
 
     print()
 
-def profile_bucket_shifting_decode(device, prompt_len=200, total_generate_tokens=850, batch_size=4):
+def profile_bucket_shifting_decode(device, prompt_len=200, total_generate_tokens=1900, batch_size=4):
     gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "GPU"
 
     print("========================================================================================================================")
-    print("5. BUCKET-SHIFTING DECODING BENCHMARK (DYNAMIC BUCKET MEMORY EXPANSION)")
-    print(f"   (Prompt: {prompt_len} tokens -> Generating {total_generate_tokens} tokens, Buckets: {BUCKETS}, Batch Size: {batch_size}, GPU: {gpu_name})")
+    print("5. BUCKET-SHIFTING DECODING BENCHMARK (PROMPT: 200 -> GENERATING 1900 TOKENS = 2100 TOTAL TOKENS)")
+    print(f"   (Buckets: {BUCKETS}, Batch Size: {batch_size}, GPU: {gpu_name})")
     print("========================================================================================================================")
 
     embed_dim = 2048
@@ -339,11 +339,11 @@ def main():
             title="4. EXTREME LONG SEQUENCE GENERATION BENCHMARK (2048 TOKENS)"
         )
 
-        # 4. Bucket-Shifting Decoding Benchmark (Prompt: 200 -> Generating 850 Tokens)
+        # 4. Bucket-Shifting Decoding Benchmark (Prompt: 200 -> Generating 1900 Tokens = 2100 Total)
         profile_bucket_shifting_decode(
             device,
             prompt_len=200,
-            total_generate_tokens=850,
+            total_generate_tokens=1900,
             batch_size=4
         )
 
