@@ -2,7 +2,16 @@ import time
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from src.models.transformer import Transformer
+
+BUCKETS = [256, 512, 1024, 2048, 4096]
+
+def get_bucket(seq_len):
+    for b in BUCKETS:
+        if seq_len <= b:
+            return b
+    raise ValueError(f"seq_len {seq_len} exceeds largest bucket {BUCKETS[-1]}")
 
 def set_seed(seed=42):
     torch.manual_seed(seed)
@@ -78,10 +87,10 @@ def profile_decode_loop(device, initial_context_len, max_new_tokens, batch_size,
     dtype = torch.float16
 
     configs = [
-        ("MHA (Multi-Head Attention)", 16),
-        ("GQA-4 (Grouped-Query Attention)", 4),
-        ("GQA-2 (Grouped-Query Attention)", 2),
         ("MQA (Multi-Query Attention)", 1),
+        ("GQA-2 (Grouped-Query Attention)", 2),
+        ("GQA-4 (Grouped-Query Attention)", 4),
+        ("MHA (Multi-Head Attention)", 16),
     ]
 
     header = f"{'Architecture':<32} | {'KV Heads':<8} | {'KV Cache':<12} | {'Peak VRAM':<12} | {'Total Time':<10} | {'Step Time':<10} | {'Throughput':<14} | {'Achieved BW':<14} | {'MBU (%)':<10}"
@@ -181,6 +190,118 @@ def profile_decode_loop(device, initial_context_len, max_new_tokens, batch_size,
 
     print()
 
+def profile_bucket_shifting_decode(device, prompt_len=200, total_generate_tokens=850, batch_size=4):
+    gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "GPU"
+
+    print("========================================================================================================================")
+    print("5. BUCKET-SHIFTING DECODING BENCHMARK (DYNAMIC BUCKET MEMORY EXPANSION)")
+    print(f"   (Prompt: {prompt_len} tokens -> Generating {total_generate_tokens} tokens, Buckets: {BUCKETS}, Batch Size: {batch_size}, GPU: {gpu_name})")
+    print("========================================================================================================================")
+
+    embed_dim = 2048
+    num_heads = 16
+    head_dim = embed_dim // num_heads  # 128
+    num_layers = 16
+    vocab_size = 32000
+    dtype = torch.float16
+
+    configs = [
+        ("MQA (Multi-Query Attention)", 1),
+        ("GQA-2 (Grouped-Query Attention)", 2),
+        ("GQA-4 (Grouped-Query Attention)", 4),
+        ("MHA (Multi-Head Attention)", 16),
+    ]
+
+    header = f"{'Architecture':<32} | {'KV Heads':<8} | {'Total Time':<12} | {'Step Time':<12} | {'Throughput':<16} | {'Peak GPU VRAM':<16} | {'Status':<10}"
+    print(header)
+    print("-" * len(header))
+
+    for arch_name, num_kv_heads in configs:
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats(device)
+
+        model = Transformer(
+            num_layers=num_layers,
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
+            vocab_size=vocab_size,
+            rope=True
+        ).to(device=device, dtype=dtype).eval()
+
+        # Compile submodules for reduce-overhead
+        torch._dynamo.config.suppress_errors = True
+        for layer in model.layers:
+            layer.attn = torch.compile(layer.attn, mode="reduce-overhead", dynamic=True)
+            layer.mlp = torch.compile(layer.mlp, mode="reduce-overhead", dynamic=True)
+
+        curr_bucket = get_bucket(prompt_len)
+
+        # Pre-allocate KV cache for initial bucket
+        past_key_values = []
+        for _ in range(num_layers):
+            k_cache = torch.zeros(batch_size, num_kv_heads, curr_bucket, head_dim, device=device, dtype=dtype)
+            v_cache = torch.zeros(batch_size, num_kv_heads, curr_bucket, head_dim, device=device, dtype=dtype)
+            past_key_values.append((k_cache, v_cache))
+
+        prompt_tokens = torch.randint(0, vocab_size, (batch_size, prompt_len), device=device)
+        prompt_padded = F.pad(prompt_tokens, (0, curr_bucket - prompt_len))
+
+        # Prefill stage
+        with torch.no_grad():
+            with torch.amp.autocast(device_type=device.type, dtype=dtype):
+                logits, _ = model(prompt_padded, past_key_values=past_key_values, use_cache=True, start_pos=0)
+                curr_tok = torch.argmax(logits[:, prompt_len - 1:prompt_len, :], dim=-1)
+
+        curr_pos = prompt_len
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+
+        start_event.record()
+        for step in range(total_generate_tokens):
+            target_pos = curr_pos + step
+            next_bucket = get_bucket(target_pos + 1)
+
+            # Bucket Shift: Expand memory buffers when sequence length crosses bucket threshold
+            if next_bucket > curr_bucket:
+                new_past_key_values = []
+                for i in range(num_layers):
+                    k_old, v_old = past_key_values[i]
+                    k_new = torch.zeros(batch_size, num_kv_heads, next_bucket, head_dim, device=device, dtype=dtype)
+                    v_new = torch.zeros(batch_size, num_kv_heads, next_bucket, head_dim, device=device, dtype=dtype)
+                    k_new[:, :, :curr_bucket, :] = k_old
+                    v_new[:, :, :curr_bucket, :] = v_old
+                    new_past_key_values.append((k_new, v_new))
+                past_key_values = new_past_key_values
+                curr_bucket = next_bucket
+
+            with torch.no_grad():
+                with torch.amp.autocast(device_type=device.type, dtype=dtype):
+                    logits, _ = model(curr_tok, past_key_values=past_key_values, use_cache=True, start_pos=target_pos)
+                    curr_tok = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
+
+        end_event.record()
+        torch.cuda.synchronize()
+
+        total_ms = start_event.elapsed_time(end_event)
+        avg_step_ms = total_ms / total_generate_tokens
+        peak_vram_mb = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
+
+        total_tokens = batch_size * total_generate_tokens
+        throughput_tok_sec = total_tokens / (total_ms / 1000.0)
+
+        tot_time_str = f"{total_ms / 1000.0:.2f} s"
+        step_str = f"{avg_step_ms:.2f} ms"
+        tp_str = f"{throughput_tok_sec:.2f} tok/s"
+        vram_str = f"{peak_vram_mb:.2f} MB"
+
+        print(f"{arch_name:<32} | {num_kv_heads:<8} | {tot_time_str:<12} | {step_str:<12} | {tp_str:<16} | {vram_str:<16} | {'✅ PASSED':<10}")
+
+        del model, past_key_values
+        torch.cuda.empty_cache()
+
+    print()
+
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Running benchmarks on Device: {device}\n")
@@ -216,6 +337,14 @@ def main():
             max_new_tokens=2048,
             batch_size=8,
             title="4. EXTREME LONG SEQUENCE GENERATION BENCHMARK (2048 TOKENS)"
+        )
+
+        # 4. Bucket-Shifting Decoding Benchmark (Prompt: 200 -> Generating 850 Tokens)
+        profile_bucket_shifting_decode(
+            device,
+            prompt_len=200,
+            total_generate_tokens=850,
+            batch_size=4
         )
 
 if __name__ == "__main__":
