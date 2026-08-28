@@ -11,9 +11,11 @@ def set_seed(seed=42):
 
 def get_gpu_peak_bandwidth():
     if not torch.cuda.is_available():
-        return 448.0
+        return 616.0
     device_name = torch.cuda.get_device_name(0)
-    if "2080" in device_name:
+    if "2080 Ti" in device_name:
+        return 616.0
+    elif "2080" in device_name:
         return 448.0
     elif "3090" in device_name:
         return 936.0
@@ -24,7 +26,7 @@ def get_gpu_peak_bandwidth():
     elif "H100" in device_name:
         return 3350.0
     else:
-        return 448.0  # Default fallback bandwidth in GB/s
+        return 616.0
 
 def verify_kv_cache_correctness(device):
     print("==================================================")
@@ -58,49 +60,22 @@ def verify_kv_cache_correctness(device):
     print(f"Generated Tokens Match Exactly: {'✅ PASSED' if matches else '❌ FAILED'}\n")
     assert matches, "KV Cache generation output does not match non-cached generation!"
 
-def profile_cache_vs_nocache(model, prompt, new_tokens_list, device):
-    print("==================================================")
-    print("2. AUTOREGRESSIVE GENERATION: KV CACHE VS NO CACHE")
-    print("==================================================")
-    print(f"{'New Tokens':<12} | {'No-Cache Time (s)':<18} | {'With-Cache Time (s)':<18} | {'Speedup':<10}")
-    print("-" * 66)
-
-    for num_tokens in new_tokens_list:
-        # Warmup
-        _ = model.generate(prompt.clone(), max_new_tokens=5, use_cache=False)
-        _ = model.generate(prompt.clone(), max_new_tokens=5, use_cache=True)
-        torch.cuda.synchronize()
-
-        # No cache
-        start = time.perf_counter()
-        _ = model.generate(prompt.clone(), max_new_tokens=num_tokens, use_cache=False)
-        torch.cuda.synchronize()
-        time_nocache = time.perf_counter() - start
-
-        # With cache
-        start = time.perf_counter()
-        _ = model.generate(prompt.clone(), max_new_tokens=num_tokens, use_cache=True)
-        torch.cuda.synchronize()
-        time_cache = time.perf_counter() - start
-
-        speedup = time_nocache / max(time_cache, 1e-6)
-        print(f"{num_tokens:<12} | {time_nocache:<18.4f} | {time_cache:<18.4f} | {speedup:<10.2f}x")
-    print()
-
-def profile_mha_vs_gqa_kv_cache(device, target_seq_len=2048, batch_size=4):
+def profile_decode_loop(device, initial_context_len, max_new_tokens, batch_size, title):
     gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "GPU"
     peak_bw_gbs = get_gpu_peak_bandwidth()
+    max_seq_len = initial_context_len + max_new_tokens
 
-    print("==================================================")
-    print("3. ARCHITECTURE COMPARISON AT LONG SEQUENCE LENGTH")
-    print(f"   (Batch Size: {batch_size}, Sequence Length: {target_seq_len}, GPU: {gpu_name} [{peak_bw_gbs:.0f} GB/s peak])")
-    print("==================================================")
+    print("========================================================================================================================")
+    print(f"{title}")
+    print(f"   (Batch Size: {batch_size}, Context: {initial_context_len} -> {max_seq_len}, GPU: {gpu_name}, BW: {peak_bw_gbs} GB/s)")
+    print("========================================================================================================================")
 
     embed_dim = 2048
     num_heads = 16
     head_dim = embed_dim // num_heads  # 128
     num_layers = 16
     vocab_size = 32000
+    dtype = torch.float16
 
     configs = [
         ("MHA (Multi-Head Attention)", 16),
@@ -109,7 +84,7 @@ def profile_mha_vs_gqa_kv_cache(device, target_seq_len=2048, batch_size=4):
         ("MQA (Multi-Query Attention)", 1),
     ]
 
-    header = f"{'Architecture':<32} | {'KV Heads':<8} | {'KV Cache':<10} | {'Peak VRAM':<12} | {'Step Time':<10} | {'Throughput':<14} | {'Bandwidth':<12} | {'MBU (%)':<8}"
+    header = f"{'Architecture':<32} | {'KV Heads':<8} | {'KV Cache':<12} | {'Peak VRAM':<12} | {'Total Time':<10} | {'Step Time':<10} | {'Throughput':<14} | {'Achieved BW':<14} | {'MBU (%)':<10}"
     print(header)
     print("-" * len(header))
 
@@ -117,73 +92,92 @@ def profile_mha_vs_gqa_kv_cache(device, target_seq_len=2048, batch_size=4):
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats(device)
 
-        model = Transformer(
-            num_layers=num_layers,
-            embed_dim=embed_dim,
-            num_heads=num_heads,
-            num_kv_heads=num_kv_heads,
-            vocab_size=vocab_size,
-            rope=True
-        ).to(device).eval()
-
-        # Calculate bytes for model parameters
-        weight_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
-
-        # Calculate theoretical KV Cache Memory Size (in bytes and MB)
-        # 2 tensors (K, V) * num_layers * batch_size * num_kv_heads * target_seq_len * head_dim * 4 bytes (fp32)
-        kv_cache_bytes = 2 * num_layers * batch_size * num_kv_heads * target_seq_len * head_dim * 4
+        kv_cache_bytes = 2 * num_layers * batch_size * num_kv_heads * max_seq_len * head_dim * 2
         kv_cache_mb = kv_cache_bytes / (1024 * 1024)
 
-        total_bytes_moved = weight_bytes + kv_cache_bytes
+        try:
+            model = Transformer(
+                num_layers=num_layers,
+                embed_dim=embed_dim,
+                num_heads=num_heads,
+                num_kv_heads=num_kv_heads,
+                vocab_size=vocab_size,
+                rope=True
+            ).to(device=device, dtype=dtype).eval()
 
-        # Simulate context at target_seq_len - 1
-        start_pos = target_seq_len - 1
-        dummy_input = torch.randint(0, vocab_size, (batch_size, 1), device=device)
+            param_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
 
-        # Build dummy past_key_values of length start_pos
-        past_key_values = []
-        for _ in range(num_layers):
-            k_cache = torch.randn(batch_size, num_kv_heads, start_pos, head_dim, device=device)
-            v_cache = torch.randn(batch_size, num_kv_heads, start_pos, head_dim, device=device)
-            past_key_values.append((k_cache, v_cache))
+            # Compile Attention and MLP submodules with mode="reduce-overhead"
+            torch._dynamo.config.suppress_errors = True
+            for layer in model.layers:
+                layer.attn = torch.compile(layer.attn, mode="reduce-overhead", dynamic=True)
+                layer.mlp = torch.compile(layer.mlp, mode="reduce-overhead", dynamic=True)
 
-        # Warmup single decode step
-        for _ in range(5):
-            with torch.no_grad():
-                _ = model(dummy_input, past_key_values=past_key_values, use_cache=True, start_pos=start_pos)
-        torch.cuda.synchronize()
+            # Pre-allocate static KV cache buffer
+            past_key_values = []
+            for _ in range(num_layers):
+                k_cache = torch.randn(batch_size, num_kv_heads, max_seq_len, head_dim, device=device, dtype=dtype)
+                v_cache = torch.randn(batch_size, num_kv_heads, max_seq_len, head_dim, device=device, dtype=dtype)
+                past_key_values.append((k_cache, v_cache))
 
-        # Benchmark single token decode latency
-        num_iters = 50
-        start_event = torch.cuda.Event(enable_timing=True)
-        end_event = torch.cuda.Event(enable_timing=True)
+            # Warmup
+            dummy_input = torch.randint(0, vocab_size, (batch_size, 1), device=device)
+            for pos in [0, 1]:
+                with torch.no_grad():
+                    with torch.amp.autocast(device_type=device.type, dtype=dtype):
+                        _ = model(dummy_input, past_key_values=past_key_values, use_cache=True, start_pos=pos)
+            torch.cuda.synchronize()
 
-        start_event.record()
-        for _ in range(num_iters):
-            with torch.no_grad():
-                _ = model(dummy_input, past_key_values=past_key_values, use_cache=True, start_pos=start_pos)
-        end_event.record()
-        torch.cuda.synchronize()
+            # Autoregressive decoding loop over max_new_tokens
+            curr_pos = initial_context_len
+            curr_tok = torch.randint(0, vocab_size, (batch_size, 1), device=device)
 
-        avg_step_ms = start_event.elapsed_time(end_event) / num_iters
-        peak_vram_mb = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
+            start_event = torch.cuda.Event(enable_timing=True)
+            end_event = torch.cuda.Event(enable_timing=True)
 
-        decode_seconds = avg_step_ms / 1000.0
-        throughput_tok_sec = batch_size / decode_seconds
-        achieved_bandwidth_gbs = (total_bytes_moved / 1e9) / decode_seconds
-        mbu_percent = (achieved_bandwidth_gbs / peak_bw_gbs) * 100.0
+            start_event.record()
+            for t in range(max_new_tokens):
+                with torch.no_grad():
+                    with torch.amp.autocast(device_type=device.type, dtype=dtype):
+                        logits, _ = model(curr_tok, past_key_values=past_key_values, use_cache=True, start_pos=curr_pos + t)
+                        curr_tok = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
+            end_event.record()
+            torch.cuda.synchronize()
 
-        kv_cache_str = f"{kv_cache_mb:.2f} MB"
-        vram_str = f"{peak_vram_mb:.2f} MB"
-        step_str = f"{avg_step_ms:.2f} ms"
-        tp_str = f"{throughput_tok_sec:.2f} tok/s"
-        bw_str = f"{achieved_bandwidth_gbs:.2f} GB/s"
-        mbu_str = f"{mbu_percent:.2f}%"
+            total_decode_ms = start_event.elapsed_time(end_event)
+            avg_step_sec = (total_decode_ms / 1000.0) / max_new_tokens
+            avg_step_ms = avg_step_sec * 1000.0
+            peak_vram_mb = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
 
-        print(f"{arch_name:<32} | {num_kv_heads:<8} | {kv_cache_str:<10} | {vram_str:<12} | {step_str:<10} | {tp_str:<14} | {bw_str:<12} | {mbu_str:<8}")
+            total_tokens_generated = batch_size * max_new_tokens
+            throughput_tok_sec = total_tokens_generated / (total_decode_ms / 1000.0)
 
-        del model, past_key_values
-        torch.cuda.empty_cache()
+            # Average KV cache length across decode loop
+            avg_seq_len = initial_context_len + (max_new_tokens / 2.0)
+            avg_kv_read_bytes_per_step = 2 * num_layers * batch_size * num_kv_heads * avg_seq_len * head_dim * 2
+            avg_kv_write_bytes_per_step = 2 * num_layers * batch_size * num_kv_heads * 1 * head_dim * 2
+
+            total_bytes_per_step = param_bytes + avg_kv_read_bytes_per_step + avg_kv_write_bytes_per_step
+            achieved_bw_gbs = (total_bytes_per_step / avg_step_sec) / 1e9
+            mbu = (achieved_bw_gbs / peak_bw_gbs) * 100.0
+
+            kv_cache_str = f"{kv_cache_mb:.2f} MB"
+            vram_str = f"{peak_vram_mb:.2f} MB"
+            tot_time_str = f"{total_decode_ms / 1000.0:.2f} s"
+            step_str = f"{avg_step_ms:.2f} ms"
+            tp_str = f"{throughput_tok_sec:.2f} tok/s"
+            bw_str = f"{achieved_bw_gbs:.2f} GB/s"
+            mbu_str = f"{mbu:.2f} %"
+
+            print(f"{arch_name:<32} | {num_kv_heads:<8} | {kv_cache_str:<12} | {vram_str:<12} | {tot_time_str:<10} | {step_str:<10} | {tp_str:<14} | {bw_str:<14} | {mbu_str:<10}")
+
+            del model, past_key_values
+            torch.cuda.empty_cache()
+
+        except torch.OutOfMemoryError:
+            kv_cache_str = f"{kv_cache_mb:.2f} MB"
+            print(f"{arch_name:<32} | {num_kv_heads:<8} | {kv_cache_str:<12} | {'OOM':<12} | {'OOM':<10} | {'OOM':<10} | {'OOM':<14} | {'OOM':<14} | {'OOM':<10}")
+            torch.cuda.empty_cache()
 
     print()
 
@@ -196,22 +190,33 @@ def main():
 
     verify_kv_cache_correctness(device)
 
-    # Benchmark KV Cache vs No Cache speedup
-    small_model = Transformer(
-        num_layers=6,
-        embed_dim=512,
-        num_heads=8,
-        num_kv_heads=2,
-        vocab_size=1000,
-        rope=True
-    ).to(device).eval()
-
-    prompt = torch.randint(0, 1000, (1, 16), device=device)
-    profile_cache_vs_nocache(small_model, prompt, [32, 64, 128, 256], device)
-
-    # Benchmark MHA vs GQA at long contexts
     if device.type == "cuda":
-        profile_mha_vs_gqa_kv_cache(device, target_seq_len=2048, batch_size=4)
+        # 1. Short Sequence Generation (128 Tokens, Batch Size 16)
+        profile_decode_loop(
+            device,
+            initial_context_len=2048,
+            max_new_tokens=128,
+            batch_size=16,
+            title="2. SHORT SEQUENCE GENERATION BENCHMARK (128 TOKENS)"
+        )
+
+        # 2. Long Sequence Generation (1024 Tokens, Batch Size 4)
+        profile_decode_loop(
+            device,
+            initial_context_len=2048,
+            max_new_tokens=1024,
+            batch_size=4,
+            title="3. LONG SEQUENCE GENERATION BENCHMARK (1024 TOKENS)"
+        )
+
+        # 3. Extreme Long Sequence Generation (2048 Tokens, Batch Size 8)
+        profile_decode_loop(
+            device,
+            initial_context_len=2048,
+            max_new_tokens=2048,
+            batch_size=8,
+            title="4. EXTREME LONG SEQUENCE GENERATION BENCHMARK (2048 TOKENS)"
+        )
 
 if __name__ == "__main__":
     main()

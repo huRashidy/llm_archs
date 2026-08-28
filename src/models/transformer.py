@@ -88,31 +88,48 @@ class Attention(
 
         if past_kv is not None:
             past_k, past_v = past_kv
-            k = torch.cat([past_k, k], dim=2)
-            v = torch.cat([past_v, v], dim=2)
+            if past_k.shape[2] < start_pos + seq_len:
+                # Fallback to dynamic concatenation if buffer is not pre-allocated
+                k = torch.cat([past_k, k], dim=2)
+                v = torch.cat([past_v, v], dim=2)
+                present_kv = (k, v)
+                total_seq_len = k.shape[2]
+            else:
+                # Pre-allocated static cache buffer: in-place slice update (NO torch.cat allocation/copying!)
+                past_k[:, :, start_pos:start_pos + seq_len, :] = k
+                past_v[:, :, start_pos:start_pos + seq_len, :] = v
+                total_seq_len = start_pos + seq_len
+                k = past_k[:, :, :total_seq_len, :]
+                v = past_v[:, :, :total_seq_len, :]
+                present_kv = (past_k, past_v)
+        else:
+            present_kv = None
+            total_seq_len = seq_len
 
-        present_kv = (k, v) if use_cache else None
-        total_seq_len = k.shape[2]
+        if self.num_kv_heads == self.num_heads:
+            attn_weights = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
+            if clm and seq_len > 1:
+                mask = torch.tril(torch.ones((seq_len, total_seq_len), device=attn_weights.device, dtype=torch.bool), diagonal=start_pos)
+                attn_weights = attn_weights.masked_fill(~mask, float('-inf'))
+            attn_probs = F.softmax(attn_weights, dim=-1)
+            attn_output = torch.matmul(attn_probs, v)
+            context = attn_output.transpose(1, 2).contiguous().view(bsz, seq_len, self.embed_dim)
+        elif self.num_kv_heads < self.num_heads:
+            # 5D broadcast view (zero memory allocation / zero copy for GQA & MQA)
+            q_grouped = q.view(bsz, self.num_kv_heads, self.num_queries_per_kv_head, seq_len, self.head_dim)
+            k_in = k.unsqueeze(2)  # (bsz, num_kv_heads, 1, total_seq_len, head_dim)
+            v_in = v.unsqueeze(2)  # (bsz, num_kv_heads, 1, total_seq_len, head_dim)
 
-        if not self.use_GQA and self.num_kv_heads == self.num_heads:
-            k_rep = k
-            v_rep = v
-        elif self.use_GQA or self.num_kv_heads < self.num_heads:
-            k_rep = repeat_kv(k, self.num_queries_per_kv_head)
-            v_rep = repeat_kv(v, self.num_queries_per_kv_head)
+            attn_weights = torch.matmul(q_grouped, k_in.transpose(-1, -2)) / math.sqrt(self.head_dim)
+            if clm and seq_len > 1:
+                mask = torch.tril(torch.ones((seq_len, total_seq_len), device=attn_weights.device, dtype=torch.bool), diagonal=start_pos)
+                attn_weights = attn_weights.masked_fill(~mask, float('-inf'))
+            attn_probs = F.softmax(attn_weights, dim=-1)
+            attn_output = torch.matmul(attn_probs, v_in)
+            context = attn_output.permute(0, 3, 1, 2, 4).contiguous().view(bsz, seq_len, self.embed_dim)
         else:
             raise ValueError("Invalid configuration for GQA and number of KV heads.")
 
-        attn_weights = torch.matmul(q, k_rep.transpose(-2, -1)) / math.sqrt(self.head_dim)
-
-        if clm and seq_len > 1:
-            mask = torch.tril(torch.ones((seq_len, total_seq_len), device=attn_weights.device, dtype=torch.bool), diagonal=start_pos)
-            attn_weights = attn_weights.masked_fill(~mask, float('-inf'))
-
-        attn_probs = F.softmax(attn_weights, dim=-1)
-
-        attn_output = torch.matmul(attn_probs, v_rep)
-        context = attn_output.transpose(1, 2).contiguous().view(bsz, seq_len, self.embed_dim)
         attn_output = self.out_proj(context)
 
         if use_cache:
@@ -157,6 +174,7 @@ class Transformer(nn.Module):
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
         self.vocab_size = vocab_size
+        self.head_dim = embed_dim // num_heads
         self.layers = nn.ModuleList([
             TransformerBlock(embed_dim, num_heads, num_kv_heads=num_kv_heads, mlp_ratio=mlp_ratio, dropout=dropout, bias=bias, rope=rope, parallel_residual=parallel_residual)
             for _ in range(num_layers)
@@ -164,6 +182,20 @@ class Transformer(nn.Module):
         self.norm = RMSNorm(embed_dim)
         self.embed_tokens = nn.Embedding(vocab_size, embed_dim)
         self.lm_head = nn.Linear(embed_dim, vocab_size, bias=False)
+
+    def allocate_kv_cache(self, batch_size, max_seq_len, device=None, dtype=None):
+        """Pre-allocates static KV cache tensors for all layers to avoid torch.cat reallocation."""
+        if device is None:
+            device = next(self.parameters()).device
+        if dtype is None:
+            dtype = next(self.parameters()).dtype
+
+        past_key_values = []
+        for _ in range(self.num_layers):
+            k_cache = torch.zeros(batch_size, self.num_kv_heads, max_seq_len, self.head_dim, device=device, dtype=dtype)
+            v_cache = torch.zeros(batch_size, self.num_kv_heads, max_seq_len, self.head_dim, device=device, dtype=dtype)
+            past_key_values.append((k_cache, v_cache))
+        return past_key_values
 
     def forward(self, x, past_key_values=None, use_cache=False, start_pos=0):
         x = self.embed_tokens(x)
@@ -198,7 +230,9 @@ class Transformer(nn.Module):
                 idx = torch.cat((idx, idx_next), dim=1)
             return idx
         else:
-            past_key_values = None
+            bsz, seq_len = idx.shape
+            max_seq_len = seq_len + max_new_tokens
+            past_key_values = self.allocate_kv_cache(bsz, max_seq_len, device=idx.device)
             start_pos = 0
             curr_idx = idx
 

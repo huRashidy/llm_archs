@@ -35,7 +35,7 @@ def profile_decode_step(model, input_ids, model_size_gb, num_iters=100):
     avg_gpu_ms = start_event.elapsed_time(end_event) / num_iters
 
     # 4. Calculate MBU Metrics
-    peak_bandwidth_gb_s = 448.0  # Single RTX 2080 VRAM Bandwidth
+    peak_bandwidth_gb_s = 616.0  # Single RTX 2080 Ti VRAM Bandwidth
     achieved_bandwidth = model_size_gb / (avg_gpu_ms / 1000.0)
     mbu_percent = (achieved_bandwidth / peak_bandwidth_gb_s) * 100.0
 

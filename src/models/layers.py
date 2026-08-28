@@ -65,7 +65,9 @@ class RotaryEmbedding(nn.Module):
         end_pos = start_pos + seq_len
         if end_pos > self.max_seq_len_cached:
             self._set_cos_sin_cache(max(end_pos, self.max_seq_len_cached * 2))
-        return self.cos_cached[:, :, start_pos:end_pos, :], self.sin_cached[:, :, start_pos:end_pos, :]
+        cos = torch.narrow(self.cos_cached, 2, start_pos, seq_len)
+        sin = torch.narrow(self.sin_cached, 2, start_pos, seq_len)
+        return cos, sin
 
 def rotate_half(x):
     x1 = x[..., :x.shape[-1] // 2]
