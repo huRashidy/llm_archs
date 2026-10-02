@@ -338,7 +338,16 @@ def main():
             title="4. EXTREME LONG SEQUENCE GENERATION BENCHMARK (2048 TOKENS)"
         )
 
-        # 4. Bucket-Shifting Decoding Benchmark (Prompt: 200 -> Generating 1900 Tokens = 2100 Total)
+        # 4. Equal KV Cache & Weights Size Benchmark (KV Cache = Model Weights ~2.25 GB)
+        profile_decode_loop(
+            device,
+            initial_context_len=2048,
+            max_new_tokens=2548,
+            batch_size=4,
+            title="5. EQUAL KV CACHE & MODEL WEIGHTS BENCHMARK (KV CACHE ~ 2.25 GB == WEIGHTS ~ 2.25 GB)"
+        )
+
+        # 5. Bucket-Shifting Decoding Benchmark (Prompt: 200 -> Generating 1900 Tokens = 2100 Total)
         profile_bucket_shifting_decode(
             device,
             prompt_len=200,

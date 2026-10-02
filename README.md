@@ -106,7 +106,19 @@ All benchmarks were run on an **NVIDIA GeForce RTX 2080 Ti** (Peak Theoretical B
 
 ---
 
-### 4. Bucket-Shifting Decoding Benchmark (Dynamic Bucket Expansion: Prompt 200 $\to$ 1,900 New Tokens = 2,100 Total Tokens)
+### 4. Equal KV Cache & Model Weights Benchmark (KV Cache = Model Weights ~2.25 GB)
+*Config: Batch Size = 4, Context Length = 2048 $\to$ 4596 tokens (MHA KV Cache = 2,298 MB $\approx$ Model Weights = 2,298 MB)*
+
+| Architecture | KV Heads ($H_{\text{kv}}$) | KV Cache Size | Ratio to Weights | Peak GPU VRAM | Total Time | Step Latency | Throughput | Achieved Bandwidth | MBU (%) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **MHA (Multi-Head Attention)** | 16 | **2,298.00 MB** | **1.00x** | 5,534.52 MB | **34.82 s** 🚀 | **13.66 ms** 🚀 | **292.74 tok/s** 🚀 | **325.26 GB/s** | **52.80 %** |
+| **MQA (Multi-Query Attention)** | 1 | **143.62 MB** 🚀 | **0.06x** 🚀 | **2,408.52 MB** 🚀 | 42.06 s | 16.51 ms | 242.33 tok/s | 138.99 GB/s | 22.56 % |
+| **GQA-2 (Grouped-Query Attention)** | 2 | 287.25 MB | 0.12x | 2,618.52 MB | 43.99 s | 17.27 ms | 231.67 tok/s | 140.71 GB/s | 22.84 % |
+| **GQA-4 (Grouped-Query Attention)** | 4 | 574.50 MB | 0.25x | 3,814.52 MB | 44.75 s | 17.56 ms | 227.73 tok/s | 155.67 GB/s | 25.27 % |
+
+---
+
+### 5. Bucket-Shifting Decoding Benchmark (Dynamic Bucket Expansion: Prompt 200 $\to$ 1,900 New Tokens = 2,100 Total Tokens)
 *Config: Batch Size = 4, Prompt Length = 200 tokens, Generation = 1,900 new tokens, Buckets = [256, 512, 1024, 2048, 4096]*
 
 | Architecture | KV Heads ($H_{\text{kv}}$) | Total Decode Time (1900 Tokens) | Step Latency | Generation Throughput | Peak GPU VRAM | Theoretical Rank | Status |
