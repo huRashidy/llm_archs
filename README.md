@@ -121,12 +121,12 @@ All benchmarks were run on an **NVIDIA GeForce RTX 2080 Ti** (Peak Theoretical B
 ### Benchmark 5: Bucket-Shifting Decoding (Prompt 200 $\to$ 1,900 Generated Tokens = 2,100 Total)
 * **Configuration:** Batch Size = 4, Prompt = 200 tokens, Buckets = $[256, 512, 1024, 2048, 4096]$
 
-| Architecture | KV Heads ($H_{\text{kv}}$) | Total Time (1900 Tok) | Step Latency | Generation Throughput | Peak GPU VRAM | Theoretical Rank | Execution Status |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **MQA (Multi-Query Attention)** | 1 | **27.08 s** | **14.25 ms** | **280.67 tok/s** | **2,333.10 MB** | 🥇 **1st Place** | **PASSED** ✅ |
-| **GQA-2 (Grouped-Query)** | 2 | 27.26 s | 14.34 ms | 278.84 tok/s | 2,549.10 MB | 🥈 **2nd Place** | **PASSED** ✅ |
-| **GQA-4 (Grouped-Query)** | 4 | 28.52 s | 15.01 ms | 266.48 tok/s | 2,981.10 MB | 🥉 **3rd Place** | **PASSED** ✅ |
-| **MHA (Multi-Head Attention)** | 16 | 27.08 s | 14.25 ms | 280.62 tok/s | 5,541.60 MB | 4th Place | **PASSED** ✅ |
+| Architecture | KV Heads ($H_{\text{kv}}$) | Total Time (1900 Tok) | Step Latency | Generation Throughput | Peak GPU VRAM |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **MQA (Multi-Query Attention)** | 1 | **27.08 s** | **14.25 ms** | **280.67 tok/s** | **2,333.10 MB** |
+| **GQA-2 (Grouped-Query)** | 2 | 27.26 s | 14.34 ms | 278.84 tok/s | 2,549.10 MB |
+| **GQA-4 (Grouped-Query)** | 4 | 28.52 s | 15.01 ms | 266.48 tok/s | 2,981.10 MB |
+| **MHA (Multi-Head Attention)** | 16 | 27.08 s | 14.25 ms | 280.62 tok/s | 5,541.60 MB |
 
 ---
 
