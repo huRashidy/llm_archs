@@ -118,15 +118,26 @@ All benchmarks were run on an **NVIDIA GeForce RTX 2080 Ti** (Peak Theoretical B
 
 ---
 
-### Benchmark 5: Bucket-Shifting Decoding (Prompt 200 $\to$ 1,900 Generated Tokens = 2,100 Total)
-* **Configuration:** Batch Size = 4, Prompt = 200 tokens, Buckets = $[256, 512, 1024, 2048, 4096]$
+### Benchmark 5: Bucket-Shifting Decoding (Prompt 200 $\to$ 8,096 Generated Tokens = 8,296 Total)
+* **Configuration:** Batch Size = 4, Prompt = 200 tokens, Buckets = $[256, 512, 1024, 2048, 4096, 8192, 16384]$
 
-| Architecture | KV Heads ($H_{\text{kv}}$) | Total Time (1900 Tok) | Step Latency | Generation Throughput | Peak GPU VRAM |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **MQA (Multi-Query Attention)** | 1 | **27.08 s** | **14.25 ms** | **280.67 tok/s** | **2,333.10 MB** |
-| **GQA-2 (Grouped-Query)** | 2 | 27.26 s | 14.34 ms | 278.84 tok/s | 2,549.10 MB |
-| **GQA-4 (Grouped-Query)** | 4 | 28.52 s | 15.01 ms | 266.48 tok/s | 2,981.10 MB |
-| **MHA (Multi-Head Attention)** | 16 | 27.08 s | 14.25 ms | 280.62 tok/s | 5,541.60 MB |
+| Architecture | KV Heads ($H_{\text{kv}}$) | Total Time (8096 Tok) | Step Latency | Generation Throughput | Peak GPU VRAM | Benchmark Status |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **MQA (Multi-Query Attention)** | 1 | **115.34 s** 🚀 | **14.25 ms** 🚀 | **280.76 tok/s** 🚀 | **2,408.52 MB** 💾 | **PASSED** ✅ |
+| **GQA-2 (Grouped-Query)** | 2 | **116.14 s** | **14.35 ms** | **278.83 tok/s** | **4,408.52 MB** | **PASSED** ✅ |
+| **GQA-4 (Grouped-Query)** | 4 | **121.57 s** | **15.02 ms** | **266.38 tok/s** | **7,384.52 MB** | **PASSED** ✅ |
+| **MHA (Multi-Head Attention)** | 16 | **OOM** | **OOM** | **OOM** | **OOM** | **FAILED (OOM)** ❌ |
+
+---
+
+### 🔄 Benchmark 4 vs. Benchmark 5 Direct Comparison ($8,296$ Token Context)
+
+| Architecture | Benchmark 4 Latency (Un-bucketed) | Benchmark 5 Latency (Bucket-Shifting) | Benchmark 4 Throughput | Benchmark 5 Throughput | Peak VRAM | CUDA Graph Speedup |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **MQA** | 16.50 ms | **14.25 ms** | 242.38 tok/s | **280.76 tok/s** | **2,408.52 MB** | **$+15.8\%$ Speedup** 🚀 |
+| **GQA-2** | 17.28 ms | **14.35 ms** | 231.47 tok/s | **278.83 tok/s** | **4,408.52 MB** | **$+20.5\%$ Speedup** 🚀 |
+| **GQA-4** | 17.57 ms | **15.02 ms** | 227.64 tok/s | **266.38 tok/s** | **7,384.52 MB** | **$+17.0\%$ Speedup** 🚀 |
+| **MHA** | **OOM** | **OOM** | **OOM** | **OOM** | **OOM** | **FAILED (OOM)** ❌ |
 
 ---
 
