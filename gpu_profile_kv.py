@@ -121,7 +121,6 @@ def profile_decode_loop(device, initial_context_len, max_new_tokens, batch_size,
             for layer in model.layers:
                 layer.attn = torch.compile(layer.attn, mode="reduce-overhead", dynamic=True)
                 layer.mlp = torch.compile(layer.mlp, mode="reduce-overhead", dynamic=True)
-
             # Pre-allocate static KV cache buffer
             past_key_values = []
             for _ in range(num_layers):
