@@ -1,24 +1,74 @@
-# Multi-Head, Grouped-Query & Multi-Query Attention Benchmarking
+# LLM Architectures Benchmark & Optimization Suite
 
-This repository provides a high-performance benchmarking suite comparing **Multi-Head Attention (MHA)**, **Grouped-Query Attention (GQA)**, and **Multi-Query Attention (MQA)** architectures. It evaluates prefill vs. decode latency, KV cache memory scaling, Memory Bandwidth Utilization (MBU), and PyTorch framework overheads on NVIDIA GPUs.
+A high-performance PyTorch benchmark and experimentation codebase analyzing Large Language Model (LLM) attention architectures, training dynamics, `torch.compile` (TorchInductor) optimizations, Key-Value (KV) caching, and CUDA Graph execution strategies.
 
----
-
-## 🚀 Key Empirical Results Summary
-
-| Benchmark Scenario | MHA (16 KV Heads) | GQA-4 (4 KV Heads) | GQA-2 (2 KV Heads) | MQA (1 KV Head) | Key Takeaway |
-| :--- | :---: | :---: | :---: | :---: | :--- |
-| **KV Cache Size ($B=8, L=4096$)** | **4,096.00 MB** | 1,024.00 MB | 512.00 MB | **256.00 MB** | **$16\times$ KV Cache Reduction** with MQA |
-| **Peak VRAM ($B=8, L=4096$)** | 6,456.44 MB | 6,374.76 MB | 3,258.76 MB | **2,728.76 MB** | **Saves 3.73 GB VRAM** ($2.5\times$ higher concurrency) |
-| **Short Decode Throughput (128 Tokens, $B=16$)** | **1,022.46 tok/s** | 365.42 tok/s | 389.18 tok/s | **390.45 tok/s** | $\text{MQA} > \text{GQA-2} > \text{GQA-4}$ among reduced architectures |
-| **Long Decode Throughput (1024 Tokens, $B=4$)** | **292.00 tok/s** | 227.83 tok/s | 231.48 tok/s | **242.33 tok/s** | $\text{MQA} > \text{GQA-2} > \text{GQA-4}$ |
-| **Extreme Decode Throughput (2048 Tokens, $B=8$)** | **578.80 tok/s** | 244.94 tok/s | 244.10 tok/s | **247.08 tok/s** | $\text{MQA} > \text{GQA-2} > \text{GQA-4}$ |
+This repository compares:
+* **Attention Architectures**: Multi-Head Attention (**MHA**), Grouped-Query Attention (**GQA-2**, **GQA-4**), and Multi-Query Attention (**MQA**).
+* **Residual Topologies**: Sequential Residual vs. Parallel Residual Blocks.
+* **Execution Modes**: PyTorch Eager Mode vs. `torch.compile` (`default`, `reduce-overhead`, `max-autotune`).
+* **Decoding Mechanics**: Un-bucketed dynamic sequence decoding vs. **Bucket-Shifting Decoding** ($200 \to 256 \to 512 \to 1024 \to 2048 \to 4096$).
 
 ---
 
-## 📊 Detailed Autoregressive Decoding Benchmarks (`gpu_profile_kv.py`)
+## ⚡ 1. Training & Architecture Variations (TinyStories 52.76M Params)
 
-All benchmarks were run on an **NVIDIA GeForce RTX 2080 Ti** (Peak Theoretical Bandwidth: **616.0 GB/s**, 11 GB VRAM) using FP16 precision, pre-allocated static KV cache buffers, and submodule compilation (`layer.attn` & `layer.mlp`).
+* **Dataset:** TinyStories ($5,000$ samples, sequence length $L = 256$, batch size $B = 16$)
+* **Model Configuration:** 6 Layers, $d_{\text{model}} = 384$, $H_q = 6$ Heads, Vocab Size = 50,257
+* **Training Pipeline:** FP16 Automatic Mixed Precision (`torch.amp`), AdamW ($\text{LR} = 5 \times 10^{-4}$), Cosine LR Schedule with Warmup, Gradient Clipping ($1.0$), 500 Steps.
+
+### PyTorch Eager Mode Execution
+
+| Configuration | Parameters | Val Loss | Val PPL | Throughput (tok/s) | Peak VRAM |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **1. Baseline (MHA + Sequential)** | $52.76\text{M}$ | **3.1644** | **23.67** | $50,178.9$ | $4.157\text{ GB}$ |
+| **2. Variant A (Parallel Residual)** | $52.76\text{M}$ | $3.1742$ | $23.91$ | $49,965.4$ | $4.124\text{ GB}$ |
+| **3. Variant B (GQA: 2 KV Heads)** | $51.58\text{M}$ | $3.1966$ | $24.45$ | $51,831.6$ | $4.143\text{ GB}$ |
+| **4. Variant C (GQA + Parallel)** | $51.58\text{M}$ | $3.1680$ | $23.76$ | **51,925.7** | **4.109 GB** |
+
+### Compiled Mode Execution (`torch.compile`)
+
+| Configuration | Parameters | Val Loss | Val PPL | Throughput (tok/s) | Peak VRAM |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **1. Baseline (MHA + Sequential)** | $52.76\text{M}$ | $3.1573$ | $23.51$ | $62,402.5$ | **3.937 GB** |
+| **2. Variant A (Parallel Residual)** | $52.76\text{M}$ | **3.1516** | **23.37** | $63,035.5$ | $4.336\text{ GB}$ |
+| **3. Variant B (GQA: 2 KV Heads)** | $51.58\text{M}$ | $3.1726$ | $23.87$ | $63,316.2$ | $4.725\text{ GB}$ |
+| **4. Variant C (GQA + Parallel)** | $51.58\text{M}$ | $3.1914$ | $24.32$ | **64,374.2** | $5.115\text{ GB}$ |
+
+### Eager vs. Compiled Throughput Comparison
+
+```text
+Throughput (Tokens / Second)
+========================================================================================
+1. Baseline (Eager)    [50,178.9] █████████████████████████
+1. Baseline (Compiled) [62,402.5] ███████████████████████████████ (+24.4%)
+----------------------------------------------------------------------------------------
+4. Variant C (Eager)   [51,925.7] ██████████████████████████
+4. Variant C (Compiled)[64,374.2] ████████████████████████████████ (+24.0%)
+========================================================================================
+```
+
+---
+
+## 🧠 Systems & Compiler Analysis
+
+### 1. The Eager Mode Fallacy & Memory Reclamation
+In standard PyTorch Eager Mode, Parallel Residual blocks do not achieve concurrent GPU execution. Operations are queued sequentially on the default CUDA stream (`Stream 0`). Furthermore, parallel branching forces PyTorch to store both Attention and MLP outputs in High-Bandwidth Memory (HBM) simultaneously for the 3-way addition ($x + a + m$), creating extra HBM read/write roundtrips that reduce throughput ($49,965 \text{ vs. } 50,178 \text{ tok/s}$).
+
+However, Eager Mode benefits from dynamic activation freeing: because parallel paths branch from $\text{RMSNorm}(x)$ simultaneously, activation lifetimes are shortened compared to sequential dependencies, allowing Variant C (GQA + Parallel) to achieve the lowest Eager VRAM footprint ($4.109 \text{ GB}$).
+
+### 2. Kernel Fusion via TorchInductor
+`torch.compile` allows TorchInductor to generate fused Triton kernels that execute Parallel Attention and MLP additions in single CUDA passes. Intermediate activations stay inside high-speed GPU SRAM registers ($19 \text{ TB/s}$) rather than flushing to main HBM ($2\text{--}3 \text{ TB/s}$), unlocking parallel execution and driving throughput up to **$63,035 \text{ tok/s}$**.
+
+### 3. Static Workspace Memory vs. Graph Complexity
+While `torch.compile` accelerates execution by up to $24\%$, it reverses the VRAM hierarchy between models:
+* **Baseline (Sequential):** The non-branching, linear graph enables Inductor to aggressively reuse global scratchpad buffers, lowering VRAM to **$3.937 \text{ GB}$**.
+* **Complex Variants (GQA / Parallel):** To fuse multi-branch additions ($x + a + m$) and handle GQA key/value broadcasting without GPU register spilling, TorchInductor pre-allocates persistent, static memory workspace buffers. Complex graph topologies add static allocation pools ($\approx 0.39 \text{ GB}$ per structural feature), raising compiled peak VRAM for Variant C up to $5.115 \text{ GB}$.
+
+---
+
+## 📊 2. Decoding & GPU Profiling Benchmarks
+
+All benchmarks were run on an **NVIDIA GeForce RTX 2080 Ti** (Peak Theoretical Bandwidth: $616.0\text{ GB/s}$, $11\text{ GB}$ VRAM, PyTorch `2.10.0+cu128`, FP16 precision).
 
 ### 1. Short Sequence Generation Benchmark (128 Tokens)
 *Config: Batch Size = 16, Context Length = 2048 $\to$ 2176 tokens*
@@ -54,6 +104,8 @@ All benchmarks were run on an **NVIDIA GeForce RTX 2080 Ti** (Peak Theoretical B
 | **GQA-2 (Grouped-Query Attention)** | 2 | 512.00 MB | 3,258.76 MB | 67.12 s | 32.77 ms | 244.10 tok/s | 78.65 GB/s | 12.77 % |
 | **GQA-4 (Grouped-Query Attention)** | 4 | 1,024.00 MB | 6,374.76 MB | 66.89 s | 32.66 ms | 244.94 tok/s | 92.28 GB/s | 14.98 % |
 
+---
+
 ### 4. Bucket-Shifting Decoding Benchmark (Dynamic Bucket Expansion: Prompt 200 $\to$ 1,900 New Tokens = 2,100 Total Tokens)
 *Config: Batch Size = 4, Prompt Length = 200 tokens, Generation = 1,900 new tokens, Buckets = [256, 512, 1024, 2048, 4096]*
 
@@ -66,34 +118,23 @@ All benchmarks were run on an **NVIDIA GeForce RTX 2080 Ti** (Peak Theoretical B
 
 ---
 
-## 🔍 Key Architecture & Framework Insights
+## 🛠️ Tracing & Deep Compiler Analysis (`compile_trace_study.py`)
 
-### 1. Performance Ordering Among Reduced KV Architectures
-Across all context lengths and batch sizes, **MQA is consistently the fastest architecture among all reduced-KV variants**:
-$$\text{MQA} > \text{GQA-2} > \text{GQA-4}$$
-Speed orders directly with KV cache memory footprint reduction: $\text{MQA (256 MB)} < \text{GQA-2 (512 MB)} < \text{GQA-4 (1024 MB)}$.
+To inspect PyTorch Inductor internals, CUDA Graph invalidations, and Triton autotuning, run:
 
-### 2. Documented Framework Limitation: Standard PyTorch vs. Production Inference Engines
-- **Why MHA is Faster in Standard PyTorch (`torch.matmul`)**:
-  - In standard PyTorch, MHA uses 4D contiguous `torch.matmul(q, k.transpose(-2, -1))` without any 5D tensor reshaping or dimension permuting (`k_rep = k`).
-  - For GQA and MQA, standard PyTorch uses zero-copy 5D broadcasted tensor formatting (`q.view(...)`, `k.unsqueeze(2)`, `v.unsqueeze(2)`).
-  - To reconstruct the output shape `(bsz, seq_len, embed_dim)`, PyTorch must execute `attn_output.permute(0, 3, 1, 2, 4).contiguous()`.
-  - In PyTorch Eager mode, `permute(0, 3, 1, 2, 4).contiguous()` forces a 5-dimensional stride transposition and memory copy in VRAM 16 times per step (once per layer).
-  - This 5D tensor stride permutation overhead inside PyTorch Eager mode adds ~8–12 ms per step of Python framework overhead.
+```bash
+# Execute trace generation
+python compile_trace_study.py
 
-- **How Production Engines (vLLM / FlashDecoding / TensorRT-LLM) Eliminate This Overhead**:
-  - Production C++/CUDA inference engines never execute 5D stride permutations or extra VRAM memory copies.
-  - Custom CUDA kernels load the MQA KV head **once into GPU Shared Memory (SRAM)** per Streaming Multiprocessor. All 16 query heads read from SRAM in parallel with **zero 5D stride permutes**, enabling MQA to achieve its full theoretical speedup over MHA in production.
+# Inspect graph breaks, recompiles, and CUDA Graph events
+TORCH_LOGS="graph_breaks,recompiles,cudagraphs" python compile_trace_study.py
 
-### 3. CUDA Graphs & Submodule Compilation Insights
-- Compiling **`layer.mlp`** achieves **100% CUDA Graph capture** with `mode="reduce-overhead"`.
-- Compiling **`layer.attn`** triggers `skipping cudagraphs due to mutated inputs` because `past_k[...] = k` updates static KV slice buffers in-place.
-- Passing dynamic integer position `start_pos` causes PyTorch Dynamo guard recompilations until hitting `recompile_limit (8)`.
+# Generate visual HTML / Perfetto traces
+TORCH_TRACE="./torch_trace_html" python compile_trace_study.py
+```
 
-### 4. The True Commercial Motive for GQA / MQA: VRAM Footprint & Serving Capacity
-The primary motive for adopting GQA and MQA in modern LLMs (such as LLaMA 3 and Mistral) is **VRAM Memory Efficiency**:
-- **MQA cuts total peak GPU VRAM from 6.45 GB down to 2.72 GB** (saving **3.73 GB of VRAM**).
-- This memory reduction allows serving **$2.5\times$ higher batch concurrency** or **$16\times$ longer context windows** on the exact same hardware footprint.
+### Visual Trace Viewer
+Open [torch_trace_html/index.html](file:///home/hussin/llm_archs_benchmark/torch_trace_html/index.html) in your browser or drop [torch_trace_html/trace.json](file:///home/hussin/llm_archs_benchmark/torch_trace_html/trace.json) into `chrome://tracing` / [ui.perfetto.dev](https://ui.perfetto.dev).
 
 ---
 
@@ -108,19 +149,11 @@ The primary motive for adopting GQA and MQA in modern LLMs (such as LLaMA 3 and 
 │   └── data.py               # Streaming dataset & block tokenizer
 ├── checkpoints/              # Model weights per experiment
 ├── results/                  # Metric JSON files & summary reports
-├── notebooks/                # Interactive profiling notebooks (MBU & torch.compile)
 ├── train.py                  # Core training & evaluation script
-├── run_matrix.py             # Eager Mode benchmarking harness
-├── run_matrix_with_compile.py # Torch.compile benchmarking harness
-└── gpu_profile_kv.py         # Comprehensive KV Cache & GQA vs MHA profiler (128, 1024, 2048 tokens)
-```
-
----
-
-## 🛠️ Running the Profiler
-
-To run the full autoregressive decoding benchmark across short (128), long (1024), and extreme (2048) token sequences:
-
-```bash
-python3 gpu_profile_kv.py
+├── run_matrix.py             # Eager Mode training benchmark harness
+├── run_matrix_with_compile.py # Torch.compile training benchmark harness
+├── gpu_profile_kv.py         # Long-sequence KV Cache & Bucket-Shifting Decoding profiler
+├── compile_trace_study.py    # PyTorch Dynamo / Inductor compiler tracing study script
+├── torch_trace_html/         # Visual Perfetto / Chrome trace HTML & JSON files
+└── README.md
 ```
