@@ -106,15 +106,15 @@ All benchmarks were run on an **NVIDIA GeForce RTX 2080 Ti** (Peak Theoretical B
 
 ---
 
-### 4. Equal KV Cache & Model Weights Benchmark (KV Cache = Model Weights ~2.25 GB)
-*Config: Batch Size = 4, Context Length = 2048 $\to$ 4596 tokens (MHA KV Cache = 2,298 MB $\approx$ Model Weights = 2,298 MB)*
+### 4. GQA-2 Equal KV Cache & Model Weights Benchmark (GQA-2 KV Cache = Model Weights ~2.07 GB)
+*Config: Batch Size = 4, Context Length = 2048 $\to$ 8296 tokens (GQA-2 KV Cache = 2,074 MB $\approx$ GQA-2 Model Weights = 2,074 MB)*
 
-| Architecture | KV Heads ($H_{\text{kv}}$) | KV Cache Size | Ratio to Weights | Peak GPU VRAM | Total Time | Step Latency | Throughput | Achieved Bandwidth | MBU (%) |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **MHA (Multi-Head Attention)** | 16 | **2,298.00 MB** | **1.00x** | 5,534.52 MB | **34.82 s** 🚀 | **13.66 ms** 🚀 | **292.74 tok/s** 🚀 | **325.26 GB/s** | **52.80 %** |
-| **MQA (Multi-Query Attention)** | 1 | **143.62 MB** 🚀 | **0.06x** 🚀 | **2,408.52 MB** 🚀 | 42.06 s | 16.51 ms | 242.33 tok/s | 138.99 GB/s | 22.56 % |
-| **GQA-2 (Grouped-Query Attention)** | 2 | 287.25 MB | 0.12x | 2,618.52 MB | 43.99 s | 17.27 ms | 231.67 tok/s | 140.71 GB/s | 22.84 % |
-| **GQA-4 (Grouped-Query Attention)** | 4 | 574.50 MB | 0.25x | 3,814.52 MB | 44.75 s | 17.56 ms | 227.73 tok/s | 155.67 GB/s | 25.27 % |
+| Architecture | KV Heads ($H_{\text{kv}}$) | KV Cache Size | Ratio to GQA-2 Weights | Peak GPU VRAM | Total Time | Step Latency | Throughput | Achieved Bandwidth | MBU (%) | Status |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **GQA-2 (Grouped-Query Attention)** | 2 | **2,074.00 MB** 🚀 | **1.00x** 🚀 | **4,408.52 MB** 🚀 | **107.97 s** | **17.28 ms** | **231.47 tok/s** | **178.68 GB/s** | **29.01 %** | **PASSED** ✅ |
+| **MQA (Multi-Query Attention)** | 1 | **1,037.00 MB** 🚀 | **0.50x** 🚀 | **2,408.52 MB** 🚀 | 103.11 s | 16.50 ms | 242.38 tok/s | 160.01 GB/s | 25.98 % | **PASSED** ✅ |
+| **GQA-4 (Grouped-Query Attention)** | 4 | 4,148.00 MB | 2.00x | 7,384.52 MB | 109.78 s | 17.57 ms | 227.64 tok/s | 223.36 GB/s | 36.26 % | **PASSED** ✅ |
+| **MHA (Multi-Head Attention)** | 16 | 16,592.00 MB | 8.00x | **OOM** | **OOM** | **OOM** | **OOM** | **OOM** | **OOM** | **FAILED (OOM)** ❌ |
 
 ---
 

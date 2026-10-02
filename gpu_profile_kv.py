@@ -338,13 +338,13 @@ def main():
             title="4. EXTREME LONG SEQUENCE GENERATION BENCHMARK (2048 TOKENS)"
         )
 
-        # 4. Equal KV Cache & Weights Size Benchmark (KV Cache = Model Weights ~2.25 GB)
+        # 4. GQA-2 Equal KV Cache & Weights Size Benchmark (GQA-2 KV Cache = Model Weights ~2.07 GB)
         profile_decode_loop(
             device,
             initial_context_len=2048,
-            max_new_tokens=2548,
+            max_new_tokens=6248,
             batch_size=4,
-            title="5. EQUAL KV CACHE & MODEL WEIGHTS BENCHMARK (KV CACHE ~ 2.25 GB == WEIGHTS ~ 2.25 GB)"
+            title="5. GQA-2 EQUAL KV CACHE & MODEL WEIGHTS BENCHMARK (GQA-2 KV CACHE ~ 2.07 GB == WEIGHTS ~ 2.07 GB)"
         )
 
         # 5. Bucket-Shifting Decoding Benchmark (Prompt: 200 -> Generating 1900 Tokens = 2100 Total)
